@@ -13,15 +13,13 @@
 
 <style>
 :root{ --ui-font: Arial, sans-serif; }
-
-/* FUENTE ÚNICA PARA TODO (paneles, tabla, popups, tooltips, etc.) */
 html, body, #map, .leaflet-container, .leaflet-control, .leaflet-popup-content, .leaflet-tooltip{
   font-family: var(--ui-font) !important;
 }
-
 html,body{margin:0;padding:0;}
 #map{width:100vw;height:100vh;}
 
+/* Tabla */
 .tabla-box{
   position:absolute; top:10px; left:10px; z-index:9999;
   background:rgba(255,255,255,0.95); padding:10px; border-radius:10px;
@@ -36,11 +34,11 @@ html,body{margin:0;padding:0;}
 table{border-collapse:collapse; width:100%; font-size:12px;}
 th,td{border:1px solid #ccc; padding:4px; text-align:center;}
 th:first-child, td:first-child{text-align:left;}
-/* colores columnas como tu kable */
 .col-ep{background:#abd4a0;}
 .col-mov{background:#f3cb44;}
 .col-int{background:#eb9890;}
 
+/* Logos */
 .logos-container{
   position:absolute; bottom:10px; left:90px; z-index:9999;
   display:flex; gap:12px; align-items:center; background:rgba(255,255,255,0.9);
@@ -48,6 +46,19 @@ th:first-child, td:first-child{text-align:left;}
 }
 .logos-container img{height:50px; width:auto;}
 .logos-text{font-size:11px; color:#333; margin-left:10px; white-space:nowrap;}
+
+/* Leyenda */
+.legend{
+  background: rgba(255,255,255,0.95);
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.legend .row{display:flex; align-items:center; gap:8px; margin:4px 0;}
+.legend .sw{width:14px; height:14px; border-radius:4px; border:1px solid #999;}
+.legend .ttl{font-weight:700; margin-bottom:6px;}
 </style>
 </head>
 
@@ -60,32 +71,28 @@ th:first-child, td:first-child{text-align:left;}
   <div id="tabla"></div>
 </div>
 
-<!-- Logos -->
+<!-- Logos (ojo: tu archivo tiene espacios => %20) -->
 <div class="logos-container">
   <img src="img/LOGO_QUILPUE.png" alt="Quilpué">
   <img src="img/GORE_VALPARAISO.png" alt="GORE Valparaíso">
-  <!-- tu archivo tiene espacios, por eso %20 -->
   <img src="img/Logo%20DESE%20UC_negro.png" alt="DESE UC">
   <span class="logos-text">Por: DESE UC y Florencia Muñoz-Obon</span>
 </div>
 
 <script>
 // =====================
-// MAPA BASE + PANES
+// MAPA + TILES
 // =====================
 const map = L.map('map', { preferCanvas: true });
 
-// tiles principal (Carto claro)
 const cartoLight = L.tileLayer(
   'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
   { attribution:'©OpenStreetMap ©Carto' }
 ).addTo(map);
 
-// MiniMap (OSM)
-const osmMini = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '©OpenStreetMap'
-});
-const miniMap = new L.Control.MiniMap(osmMini, {
+// MiniMap
+const osmMini = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'©OpenStreetMap' });
+new L.Control.MiniMap(osmMini, {
   toggleDisplay: true,
   position: 'bottomright',
   width: 180,
@@ -93,13 +100,17 @@ const miniMap = new L.Control.MiniMap(osmMini, {
   zoomLevelFixed: 10
 }).addTo(map);
 
-// panes para controlar zIndex y asegurar clicks
+// =====================
+// PANES (CLAVE PARA QUE TODO FUNCIONE)
+// =====================
 map.createPane('paneComuna'); map.getPane('paneComuna').style.zIndex = 200;
-map.createPane('paneUT');     map.getPane('paneUT').style.zIndex     = 300;
-map.createPane('paneProy');   map.getPane('paneProy').style.zIndex   = 500; // proyectos arriba
+map.createPane('paneUT');     map.getPane('paneUT').style.zIndex     = 300; // sectores (hover) pero bajo proyectos
+map.createPane('panePoly');   map.getPane('panePoly').style.zIndex   = 500;
+map.createPane('paneLine');   map.getPane('paneLine').style.zIndex   = 600;
+map.createPane('panePoint');  map.getPane('panePoint').style.zIndex  = 700; // puntos ARRIBA de TODO
 
 // =====================
-// HELPERS (robustos)
+// HELPERS
 // =====================
 function prop(p, keys){
   for(const k of keys){
@@ -111,7 +122,7 @@ function normTipo(x){
   if(!x) return "";
   return String(x)
     .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g,"") // saca tildes
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
     .replace(/\s+/g," ")
     .trim();
 }
@@ -134,7 +145,7 @@ function toTitleCase(str){
     .join(" ");
 }
 function popupProyecto(props){
-  const tipo = prop(props, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"]);
+  const tipo   = prop(props, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"]);
   const nombre = prop(props, ["Nombre_de_","NOMBRE_DE_","nombre","Nombre"]);
   const codigo = prop(props, ["CÓDIGO","CODIGO","Código_pr","Codigo_pr","CODIGO_PR"]);
   const col = colorPorTipo(tipo);
@@ -150,12 +161,10 @@ function popupProyecto(props){
 // =====================
 // CONTROL DE CAPAS
 // =====================
-const baseMaps = {}; // si después quieres más basemaps, lo metemos aquí
-const overlays = {};
-const layerControl = L.control.layers(baseMaps, overlays, { collapsed:false }).addTo(map);
+const layerControl = L.control.layers({}, {}, { collapsed:false }).addTo(map);
 
 // =====================
-// CARGAR COMUNA
+// COMUNA
 // =====================
 fetch("data/COMUNA.geojson").then(r=>r.json()).then(gj=>{
   const layer = L.geoJSON(gj, {
@@ -163,19 +172,17 @@ fetch("data/COMUNA.geojson").then(r=>r.json()).then(gj=>{
     interactive:false,
     style:{ color:"#7c0a6e", weight:2, opacity:1, fillOpacity:0 }
   }).addTo(map);
-
   layerControl.addOverlay(layer, "Comuna");
 });
 
 // =====================
-// CARGAR UT POR SECTOR (Nombre Propio en el panel)
+// UT POR SECTOR (HOVER FUNCIONA)
 // =====================
 fetch("data/UT_QUILPUE.geojson").then(r=>r.json()).then(gj=>{
-  // fitbounds con UT
-  const utLayerAll = L.geoJSON(gj);
-  map.fitBounds(utLayerAll.getBounds());
+  // fit a UT
+  const tmp = L.geoJSON(gj);
+  map.fitBounds(tmp.getBounds());
 
-  // agrupar features por SECTOR
   const bySector = new Map();
   for(const f of gj.features){
     const sRaw = prop(f.properties, ["SECTOR","Sector","sector"]) || "SIN NOMBRE";
@@ -184,19 +191,17 @@ fetch("data/UT_QUILPUE.geojson").then(r=>r.json()).then(gj=>{
     bySector.get(s).push(f);
   }
 
-  // crear una capa por sector
-  // (orden alfabético para que quede lindo)
   const sectorNames = Array.from(bySector.keys()).sort((a,b)=>a.localeCompare(b,"es"));
   for(const sector of sectorNames){
-    const feats = bySector.get(sector);
-    const sectorGJ = { type:"FeatureCollection", features: feats };
+    const sectorGJ = { type:"FeatureCollection", features: bySector.get(sector) };
 
     const layer = L.geoJSON(sectorGJ, {
       pane:'paneUT',
-      interactive:false, // CLAVE: no bloquear clicks de proyectos
+      interactive:true, // NECESARIO para hover/tooltip
       style:{ color:"#7a0f3a", weight:2, opacity:0.95, fillOpacity:0 },
       onEachFeature:(f,l)=>{
-        l.bindTooltip(String(sector), { direction:"auto", sticky:false, opacity:0.9 });
+        // tooltip al pasar el mouse
+        l.bindTooltip(String(sector), { direction:"auto", sticky:true, opacity:0.9 });
       }
     }).addTo(map);
 
@@ -205,11 +210,11 @@ fetch("data/UT_QUILPUE.geojson").then(r=>r.json()).then(gj=>{
 });
 
 // =====================
-// POLIGONOS (popups + highlight)
+// POLIGONOS (POPUP OK)
 // =====================
 fetch("data/poligonos.geojson").then(r=>r.json()).then(gj=>{
   const layer = L.geoJSON(gj, {
-    pane:'paneProy',
+    pane:'panePoly',
     interactive:true,
     style:(f)=>({
       color: colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"])),
@@ -227,11 +232,11 @@ fetch("data/poligonos.geojson").then(r=>r.json()).then(gj=>{
 });
 
 // =====================
-// LINEAS (popups + highlight)
+// LINEAS (POPUP OK)
 // =====================
 fetch("data/lineas3.geojson").then(r=>r.json()).then(gj=>{
   const layer = L.geoJSON(gj, {
-    pane:'paneProy',
+    pane:'paneLine',
     interactive:true,
     style:(f)=>({
       color: colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"])),
@@ -248,11 +253,11 @@ fetch("data/lineas3.geojson").then(r=>r.json()).then(gj=>{
 });
 
 // =====================
-// PUNTOS (popups)
+// PUNTOS (POPUP ARREGLADO: panePoint arriba de todo)
 // =====================
 fetch("data/puntos2.geojson").then(r=>r.json()).then(gj=>{
   const layer = L.geoJSON(gj, {
-    pane:'paneProy',
+    pane:'panePoint',
     interactive:true,
     pointToLayer:(f,latlng)=>{
       const col = colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"]));
@@ -261,7 +266,8 @@ fetch("data/puntos2.geojson").then(r=>r.json()).then(gj=>{
       });
     },
     onEachFeature:(f,l)=>{
-      l.bindPopup(popupProyecto(f.properties));
+      l.bindPopup(popupProyecto(f.properties), { autoPan:true, closeButton:true });
+      // TIP: abre con click normal
     }
   }).addTo(map);
 
@@ -269,30 +275,45 @@ fetch("data/puntos2.geojson").then(r=>r.json()).then(gj=>{
 });
 
 // =====================
-// TABLA CSV (bonita + sin comillas)
+// LEYENDA (tus 3 tipos)
+// =====================
+const legend = L.control({position:'bottomright'});
+legend.onAdd = function(){
+  const div = L.DomUtil.create('div','legend');
+  div.innerHTML = `
+    <div class="ttl">Leyenda</div>
+    <div class="row"><span class="sw" style="background:#f3cb44"></span> Movilidad</div>
+    <div class="row"><span class="sw" style="background:#eb9890"></span> Integrales</div>
+    <div class="row"><span class="sw" style="background:#abd4a0"></span> Espacio público</div>
+  `;
+  return div;
+};
+legend.addTo(map);
+
+// =====================
+// TABLA CSV
 // =====================
 fetch("data/TABLA_2.csv").then(r=>r.text()).then(txt=>{
-  const rows = txt.trim().split(/\r?\n/).map(line=>{
-    return line.split(",").map(c=>c.replace(/^"|"$/g,"").trim());
-  });
+  const rows = txt.trim().split(/\r?\n/).map(line =>
+    line.split(",").map(c=>c.replace(/^"|"$/g,"").trim())
+  );
 
-  let html = "<table><thead><tr>";
   const header = rows[0] || [];
+  let html = "<table><thead><tr>";
   header.forEach((h,i)=>{
-    let cls = "";
-    if(i===1) cls="col-ep";   // Espacio Público
-    if(i===2) cls="col-int";  // Integral
-    if(i===3) cls="col-mov";  // Movilidad
+    let cls="";
+    if(i===1) cls="col-ep";
+    if(i===2) cls="col-int";
+    if(i===3) cls="col-mov";
     html += `<th class="${cls}">${h}</th>`;
   });
   html += "</tr></thead><tbody>";
 
   for(let i=1;i<rows.length;i++){
-    const r = rows[i];
-    if(!r || r.length===0) continue;
+    const r = rows[i]; if(!r || !r.length) continue;
     html += "<tr>";
     r.forEach((c,j)=>{
-      let cls = "";
+      let cls="";
       if(j===1) cls="col-ep";
       if(j===2) cls="col-int";
       if(j===3) cls="col-mov";
