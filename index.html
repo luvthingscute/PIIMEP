@@ -7,7 +7,6 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- MiniMap plugin (si falla, NO rompe el mapa) -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.css"/>
 <script src="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.js"></script>
 
@@ -79,23 +78,23 @@ th:first-child, td:first-child{text-align:left;}
 
 <script>
 // =====================
-// MAPA + BASE (OSM seguro)
+// MAPA
 // =====================
 const map = L.map('map', { preferCanvas: true });
-
-// vista inicial por si los geojson fallan
 map.setView([-33.05, -71.45], 12);
 
-// base OSM (segura)
+// base
 const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '©OpenStreetMap'
 }).addTo(map);
 
-// opcional: Carto light (si quieres)
 const cartoLight = L.tileLayer(
   'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
   { attribution:'©OpenStreetMap ©Carto' }
 );
+
+// escala (lo que te faltaba)
+L.control.scale({ position:"bottomleft", metric:true, imperial:false }).addTo(map);
 
 const layerControl = L.control.layers(
   { "OSM": osm, "Carto Claro": cartoLight },
@@ -103,7 +102,7 @@ const layerControl = L.control.layers(
   { collapsed:false }
 ).addTo(map);
 
-// MiniMap (si plugin falla, no rompe)
+// MiniMap (si falla, no rompe)
 try{
   if (L.Control && L.Control.MiniMap){
     const mini = new L.Control.MiniMap(
@@ -112,17 +111,18 @@ try{
     );
     map.addControl(mini);
   }
-}catch(e){
-  console.warn("MiniMap no cargó:", e);
-}
+}catch(e){ console.warn("MiniMap no cargó:", e); }
 
 // =====================
-// PANES (orden para que popups sí funcionen)
+// PANES (clave para que popups funcionen)
 // =====================
-map.createPane('paneComuna'); map.getPane('paneComuna').style.zIndex = 200;
-map.createPane('paneUT');     map.getPane('paneUT').style.zIndex     = 300;
-map.createPane('panePoly');   map.getPane('panePoly').style.zIndex   = 500;
-map.createPane('paneLine');   map.getPane('paneLine').style.zIndex   = 600;
+// UT abajo de todo (solo para borde/tooltip)
+map.createPane('paneUT');     map.getPane('paneUT').style.zIndex     = 250;
+// comuna un poquito arriba
+map.createPane('paneComuna'); map.getPane('paneComuna').style.zIndex = 260;
+// proyectos arriba
+map.createPane('panePoly');   map.getPane('panePoly').style.zIndex   = 600;
+map.createPane('paneLine');   map.getPane('paneLine').style.zIndex   = 650;
 map.createPane('panePoint');  map.getPane('panePoint').style.zIndex  = 700;
 
 // =====================
@@ -228,7 +228,7 @@ fetchJSON("data/UT_QUILPUE.geojson")
   .catch(err=>console.error("UT:", err));
 
 // =====================
-// POLIGONOS
+// POLIGONOS (popup SÍ O SÍ)
 // =====================
 fetchJSON("data/poligonos.geojson")
   .then(gj=>{
@@ -241,7 +241,7 @@ fetchJSON("data/poligonos.geojson")
         weight:2, opacity:0.9, fillOpacity:0.5
       }),
       onEachFeature:(f,l)=>{
-        l.bindPopup(popupProyecto(f.properties));
+        l.bindPopup(popupProyecto(f.properties), { maxWidth: 420 });
         l.on("mouseover", ()=> l.setStyle({ color:"#333333", weight:3, fillOpacity:0.6 }));
         l.on("mouseout",  ()=> layer.resetStyle(l));
       }
@@ -264,7 +264,7 @@ fetchJSON("data/lineas3.geojson")
         weight:4, opacity:0.9
       }),
       onEachFeature:(f,l)=>{
-        l.bindPopup(popupProyecto(f.properties));
+        l.bindPopup(popupProyecto(f.properties), { maxWidth: 420 });
         l.on("mouseover", ()=> l.setStyle({ color:"#333333", weight:6 }));
         l.on("mouseout",  ()=> layer.resetStyle(l));
       }
@@ -275,24 +275,48 @@ fetchJSON("data/lineas3.geojson")
   .catch(err=>console.error("Líneas:", err));
 
 // =====================
-// PUNTOS (arriba de todo)
+// PUNTOS (soporta MultiPoint)
 // =====================
+function addPuntosAsCircleMarkers(gj){
+  return L.geoJSON(gj, {
+    pane:'panePoint',
+    interactive:true,
+    pointToLayer:(f,latlng)=>{
+      const col = colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"]));
+      return L.circleMarker(latlng, {
+        radius:6, color:col, fillColor:col, weight:2, opacity:0.9, fillOpacity:0.85
+      });
+    },
+    onEachFeature:(f,l)=>{
+      l.bindPopup(popupProyecto(f.properties), { autoPan:true, closeButton:true, maxWidth: 420 });
+    }
+  });
+}
+
 fetchJSON("data/puntos2.geojson")
   .then(gj=>{
-    const layer = L.geoJSON(gj, {
-      pane:'panePoint',
-      interactive:true,
-      pointToLayer:(f,latlng)=>{
-        const col = colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"]));
-        return L.circleMarker(latlng, {
-          radius:6, color:col, fillColor:col, weight:2, opacity:0.9, fillOpacity:0.85
-        });
-      },
-      onEachFeature:(f,l)=>{
-        l.bindPopup(popupProyecto(f.properties), { autoPan:true, closeButton:true });
-      }
-    }).addTo(map);
+    // si viene MultiPoint, lo “explota” a points
+    const out = { type:"FeatureCollection", features: [] };
 
+    for(const f of gj.features){
+      if(!f.geometry) continue;
+      if(f.geometry.type === "Point"){
+        out.features.push(f);
+      } else if(f.geometry.type === "MultiPoint"){
+        for(const c of f.geometry.coordinates){
+          out.features.push({
+            type:"Feature",
+            properties: f.properties || {},
+            geometry:{ type:"Point", coordinates: c }
+          });
+        }
+      } else {
+        // si por alguna razón no es punto, lo igual metemos
+        out.features.push(f);
+      }
+    }
+
+    const layer = addPuntosAsCircleMarkers(out).addTo(map);
     layerControl.addOverlay(layer, "Puntos");
   })
   .catch(err=>console.error("Puntos:", err));
