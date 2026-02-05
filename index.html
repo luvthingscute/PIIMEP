@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- MiniMap plugin -->
+<!-- MiniMap plugin (si falla, NO rompe el mapa) -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.css"/>
 <script src="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.js"></script>
 
@@ -65,13 +65,11 @@ th:first-child, td:first-child{text-align:left;}
 <body>
 <div id="map"></div>
 
-<!-- Tabla plegable -->
 <div class="tabla-box">
   <button class="tabla-toggle" onclick="toggleTabla()">▼ Resumen por sector</button>
   <div id="tabla"></div>
 </div>
 
-<!-- Logos (ojo: tu archivo tiene espacios => %20) -->
 <div class="logos-container">
   <img src="img/LOGO_QUILPUE.png" alt="Quilpué">
   <img src="img/GORE_VALPARAISO.png" alt="GORE Valparaíso">
@@ -81,33 +79,51 @@ th:first-child, td:first-child{text-align:left;}
 
 <script>
 // =====================
-// MAPA + TILES
+// MAPA + BASE (OSM seguro)
 // =====================
 const map = L.map('map', { preferCanvas: true });
 
+// vista inicial por si los geojson fallan
+map.setView([-33.05, -71.45], 12);
+
+// base OSM (segura)
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '©OpenStreetMap'
+}).addTo(map);
+
+// opcional: Carto light (si quieres)
 const cartoLight = L.tileLayer(
   'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
   { attribution:'©OpenStreetMap ©Carto' }
+);
+
+const layerControl = L.control.layers(
+  { "OSM": osm, "Carto Claro": cartoLight },
+  {},
+  { collapsed:false }
 ).addTo(map);
 
-// MiniMap
-const osmMini = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'©OpenStreetMap' });
-new L.Control.MiniMap(osmMini, {
-  toggleDisplay: true,
-  position: 'bottomright',
-  width: 180,
-  height: 180,
-  zoomLevelFixed: 10
-}).addTo(map);
+// MiniMap (si plugin falla, no rompe)
+try{
+  if (L.Control && L.Control.MiniMap){
+    const mini = new L.Control.MiniMap(
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'©OpenStreetMap' }),
+      { toggleDisplay:true, position:'bottomright', width:180, height:180, zoomLevelFixed:10 }
+    );
+    map.addControl(mini);
+  }
+}catch(e){
+  console.warn("MiniMap no cargó:", e);
+}
 
 // =====================
-// PANES (CLAVE PARA QUE TODO FUNCIONE)
+// PANES (orden para que popups sí funcionen)
 // =====================
 map.createPane('paneComuna'); map.getPane('paneComuna').style.zIndex = 200;
-map.createPane('paneUT');     map.getPane('paneUT').style.zIndex     = 300; // sectores (hover) pero bajo proyectos
+map.createPane('paneUT');     map.getPane('paneUT').style.zIndex     = 300;
 map.createPane('panePoly');   map.getPane('panePoly').style.zIndex   = 500;
 map.createPane('paneLine');   map.getPane('paneLine').style.zIndex   = 600;
-map.createPane('panePoint');  map.getPane('panePoint').style.zIndex  = 700; // puntos ARRIBA de TODO
+map.createPane('panePoint');  map.getPane('panePoint').style.zIndex  = 700;
 
 // =====================
 // HELPERS
@@ -157,125 +173,132 @@ function popupProyecto(props){
     <b>Nombre:</b> ${nombre ? nombre : "Sin nombre"}
   `;
 }
-
-// =====================
-// CONTROL DE CAPAS
-// =====================
-const layerControl = L.control.layers({}, {}, { collapsed:false }).addTo(map);
+async function fetchJSON(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(`${url} -> ${r.status} ${r.statusText}`);
+  return await r.json();
+}
 
 // =====================
 // COMUNA
 // =====================
-fetch("data/COMUNA.geojson").then(r=>r.json()).then(gj=>{
-  const layer = L.geoJSON(gj, {
-    pane:'paneComuna',
-    interactive:false,
-    style:{ color:"#7c0a6e", weight:2, opacity:1, fillOpacity:0 }
-  }).addTo(map);
-  layerControl.addOverlay(layer, "Comuna");
-});
+fetchJSON("data/COMUNA.geojson")
+  .then(gj=>{
+    const layer = L.geoJSON(gj, {
+      pane:'paneComuna',
+      interactive:false,
+      style:{ color:"#7c0a6e", weight:2, opacity:1, fillOpacity:0 }
+    }).addTo(map);
+    layerControl.addOverlay(layer, "Comuna");
+  })
+  .catch(err=>console.error("COMUNA:", err));
 
 // =====================
-// UT POR SECTOR (HOVER FUNCIONA)
+// UT POR SECTOR (hover)
 // =====================
-fetch("data/UT_QUILPUE.geojson").then(r=>r.json()).then(gj=>{
-  // fit a UT
-  const tmp = L.geoJSON(gj);
-  map.fitBounds(tmp.getBounds());
+fetchJSON("data/UT_QUILPUE.geojson")
+  .then(gj=>{
+    const tmp = L.geoJSON(gj);
+    map.fitBounds(tmp.getBounds());
 
-  const bySector = new Map();
-  for(const f of gj.features){
-    const sRaw = prop(f.properties, ["SECTOR","Sector","sector"]) || "SIN NOMBRE";
-    const s = toTitleCase(sRaw);
-    if(!bySector.has(s)) bySector.set(s, []);
-    bySector.get(s).push(f);
-  }
+    const bySector = new Map();
+    for(const f of gj.features){
+      const sRaw = prop(f.properties, ["SECTOR","Sector","sector"]) || "SIN NOMBRE";
+      const s = toTitleCase(sRaw);
+      if(!bySector.has(s)) bySector.set(s, []);
+      bySector.get(s).push(f);
+    }
 
-  const sectorNames = Array.from(bySector.keys()).sort((a,b)=>a.localeCompare(b,"es"));
-  for(const sector of sectorNames){
-    const sectorGJ = { type:"FeatureCollection", features: bySector.get(sector) };
+    const sectorNames = Array.from(bySector.keys()).sort((a,b)=>a.localeCompare(b,"es"));
+    for(const sector of sectorNames){
+      const sectorGJ = { type:"FeatureCollection", features: bySector.get(sector) };
 
-    const layer = L.geoJSON(sectorGJ, {
-      pane:'paneUT',
-      interactive:true, // NECESARIO para hover/tooltip
-      style:{ color:"#7a0f3a", weight:2, opacity:0.95, fillOpacity:0 },
+      const layer = L.geoJSON(sectorGJ, {
+        pane:'paneUT',
+        interactive:true,
+        style:{ color:"#7a0f3a", weight:2, opacity:0.95, fillOpacity:0 },
+        onEachFeature:(f,l)=>{
+          l.bindTooltip(String(sector), { direction:"auto", sticky:true, opacity:0.9 });
+        }
+      }).addTo(map);
+
+      layerControl.addOverlay(layer, sector);
+    }
+  })
+  .catch(err=>console.error("UT:", err));
+
+// =====================
+// POLIGONOS
+// =====================
+fetchJSON("data/poligonos.geojson")
+  .then(gj=>{
+    const layer = L.geoJSON(gj, {
+      pane:'panePoly',
+      interactive:true,
+      style:(f)=>({
+        color: colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"])),
+        fillColor: colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"])),
+        weight:2, opacity:0.9, fillOpacity:0.5
+      }),
       onEachFeature:(f,l)=>{
-        // tooltip al pasar el mouse
-        l.bindTooltip(String(sector), { direction:"auto", sticky:true, opacity:0.9 });
+        l.bindPopup(popupProyecto(f.properties));
+        l.on("mouseover", ()=> l.setStyle({ color:"#333333", weight:3, fillOpacity:0.6 }));
+        l.on("mouseout",  ()=> layer.resetStyle(l));
       }
     }).addTo(map);
 
-    layerControl.addOverlay(layer, sector);
-  }
-});
+    layerControl.addOverlay(layer, "Polígonos");
+  })
+  .catch(err=>console.error("Polígonos:", err));
 
 // =====================
-// POLIGONOS (POPUP OK)
+// LINEAS
 // =====================
-fetch("data/poligonos.geojson").then(r=>r.json()).then(gj=>{
-  const layer = L.geoJSON(gj, {
-    pane:'panePoly',
-    interactive:true,
-    style:(f)=>({
-      color: colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"])),
-      fillColor: colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"])),
-      weight:2, opacity:0.9, fillOpacity:0.5
-    }),
-    onEachFeature:(f,l)=>{
-      l.bindPopup(popupProyecto(f.properties));
-      l.on("mouseover", ()=> l.setStyle({ color:"#333333", weight:3, fillOpacity:0.6 }));
-      l.on("mouseout",  ()=> layer.resetStyle(l));
-    }
-  }).addTo(map);
+fetchJSON("data/lineas3.geojson")
+  .then(gj=>{
+    const layer = L.geoJSON(gj, {
+      pane:'paneLine',
+      interactive:true,
+      style:(f)=>({
+        color: colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"])),
+        weight:4, opacity:0.9
+      }),
+      onEachFeature:(f,l)=>{
+        l.bindPopup(popupProyecto(f.properties));
+        l.on("mouseover", ()=> l.setStyle({ color:"#333333", weight:6 }));
+        l.on("mouseout",  ()=> layer.resetStyle(l));
+      }
+    }).addTo(map);
 
-  layerControl.addOverlay(layer, "Polígonos");
-});
-
-// =====================
-// LINEAS (POPUP OK)
-// =====================
-fetch("data/lineas3.geojson").then(r=>r.json()).then(gj=>{
-  const layer = L.geoJSON(gj, {
-    pane:'paneLine',
-    interactive:true,
-    style:(f)=>({
-      color: colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"])),
-      weight:4, opacity:0.9
-    }),
-    onEachFeature:(f,l)=>{
-      l.bindPopup(popupProyecto(f.properties));
-      l.on("mouseover", ()=> l.setStyle({ color:"#333333", weight:6 }));
-      l.on("mouseout",  ()=> layer.resetStyle(l));
-    }
-  }).addTo(map);
-
-  layerControl.addOverlay(layer, "Líneas");
-});
+    layerControl.addOverlay(layer, "Líneas");
+  })
+  .catch(err=>console.error("Líneas:", err));
 
 // =====================
-// PUNTOS (POPUP ARREGLADO: panePoint arriba de todo)
+// PUNTOS (arriba de todo)
 // =====================
-fetch("data/puntos2.geojson").then(r=>r.json()).then(gj=>{
-  const layer = L.geoJSON(gj, {
-    pane:'panePoint',
-    interactive:true,
-    pointToLayer:(f,latlng)=>{
-      const col = colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"]));
-      return L.circleMarker(latlng, {
-        radius:6, color:col, fillColor:col, weight:2, opacity:0.9, fillOpacity:0.85
-      });
-    },
-    onEachFeature:(f,l)=>{
-      l.bindPopup(popupProyecto(f.properties), { autoPan:true, closeButton:true });
-      // TIP: abre con click normal
-    }
-  }).addTo(map);
+fetchJSON("data/puntos2.geojson")
+  .then(gj=>{
+    const layer = L.geoJSON(gj, {
+      pane:'panePoint',
+      interactive:true,
+      pointToLayer:(f,latlng)=>{
+        const col = colorPorTipo(prop(f.properties, ["Tipo_de_pr","TIPO_DE_PR","tipo","Tipo"]));
+        return L.circleMarker(latlng, {
+          radius:6, color:col, fillColor:col, weight:2, opacity:0.9, fillOpacity:0.85
+        });
+      },
+      onEachFeature:(f,l)=>{
+        l.bindPopup(popupProyecto(f.properties), { autoPan:true, closeButton:true });
+      }
+    }).addTo(map);
 
-  layerControl.addOverlay(layer, "Puntos");
-});
+    layerControl.addOverlay(layer, "Puntos");
+  })
+  .catch(err=>console.error("Puntos:", err));
 
 // =====================
-// LEYENDA (tus 3 tipos)
+// LEYENDA
 // =====================
 const legend = L.control({position:'bottomright'});
 legend.onAdd = function(){
@@ -293,37 +316,42 @@ legend.addTo(map);
 // =====================
 // TABLA CSV
 // =====================
-fetch("data/TABLA_2.csv").then(r=>r.text()).then(txt=>{
-  const rows = txt.trim().split(/\r?\n/).map(line =>
-    line.split(",").map(c=>c.replace(/^"|"$/g,"").trim())
-  );
-
-  const header = rows[0] || [];
-  let html = "<table><thead><tr>";
-  header.forEach((h,i)=>{
-    let cls="";
-    if(i===1) cls="col-ep";
-    if(i===2) cls="col-int";
-    if(i===3) cls="col-mov";
-    html += `<th class="${cls}">${h}</th>`;
-  });
-  html += "</tr></thead><tbody>";
-
-  for(let i=1;i<rows.length;i++){
-    const r = rows[i]; if(!r || !r.length) continue;
-    html += "<tr>";
-    r.forEach((c,j)=>{
+fetch("data/TABLA_2.csv")
+  .then(r=>{
+    if(!r.ok) throw new Error(`TABLA_2.csv -> ${r.status} ${r.statusText}`);
+    return r.text();
+  })
+  .then(txt=>{
+    const rows = txt.trim().split(/\r?\n/).map(line =>
+      line.split(",").map(c=>c.replace(/^"|"$/g,"").trim())
+    );
+    const header = rows[0] || [];
+    let html = "<table><thead><tr>";
+    header.forEach((h,i)=>{
       let cls="";
-      if(j===1) cls="col-ep";
-      if(j===2) cls="col-int";
-      if(j===3) cls="col-mov";
-      html += `<td class="${cls}">${c}</td>`;
+      if(i===1) cls="col-ep";
+      if(i===2) cls="col-int";
+      if(i===3) cls="col-mov";
+      html += `<th class="${cls}">${h}</th>`;
     });
-    html += "</tr>";
-  }
-  html += "</tbody></table>";
-  document.getElementById("tabla").innerHTML = html;
-});
+    html += "</tr></thead><tbody>";
+
+    for(let i=1;i<rows.length;i++){
+      const r = rows[i]; if(!r || !r.length) continue;
+      html += "<tr>";
+      r.forEach((c,j)=>{
+        let cls="";
+        if(j===1) cls="col-ep";
+        if(j===2) cls="col-int";
+        if(j===3) cls="col-mov";
+        html += `<td class="${cls}">${c}</td>`;
+      });
+      html += "</tr>";
+    }
+    html += "</tbody></table>";
+    document.getElementById("tabla").innerHTML = html;
+  })
+  .catch(err=>console.error("Tabla:", err));
 
 function toggleTabla(){
   const d=document.getElementById("tabla");
